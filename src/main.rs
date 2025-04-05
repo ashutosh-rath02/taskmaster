@@ -4,14 +4,17 @@ mod error;
 mod file_storage;
 mod interactive;
 mod notification;
+mod periodic_tasks;
 mod project;
 mod storage;
 mod task;
+mod task_dependencies;
 mod task_executor;
 mod task_handler;
+mod tui;
 mod worker_pool;
 
-use crate::error::{Result, TaskMasterError};
+use crate::error::Result;
 use crate::file_storage::FileStorage;
 use crate::project::Project;
 use crate::storage::Storage;
@@ -25,14 +28,28 @@ async fn main() -> Result<()> {
     // Check if we're running tests or in normal mode
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() > 1 && args[1] == "--test" {
-        // Run tests
-        run_sync_tests()?;
-        test_async().await?;
-    } else if args.len() > 1 && args[1] == "--interactive" {
-        // Run in interactive mode
-        let mut shell = interactive::InteractiveShell::new(&std::path::PathBuf::from("./data"))?;
-        shell.run()?;
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--test" => {
+                // Run tests
+                run_sync_tests()?;
+                test_async().await?;
+            }
+            "--interactive" => {
+                // Run in interactive mode
+                let mut shell =
+                    interactive::InteractiveShell::new(&std::path::PathBuf::from("./data"))?;
+                shell.run()?;
+            }
+            "--tui" => {
+                // Run with Terminal UI
+                tui::run_tui()?;
+            }
+            _ => {
+                // Run in CLI mode
+                cli::run_cli()?;
+            }
+        }
     } else {
         // Run in CLI mode
         cli::run_cli()?;
@@ -77,6 +94,16 @@ fn run_sync_tests() -> Result<()> {
     println!("\nTesting advanced type features:");
     if let Err(e) = test_advanced_types() {
         println!("Advanced type features test failed: {}", e);
+    }
+
+    println!("\nTesting task dependencies:");
+    if let Err(e) = test_task_dependencies() {
+        println!("Task dependencies test failed: {}", e);
+    }
+
+    println!("\nTesting periodic tasks:");
+    if let Err(e) = test_periodic_tasks() {
+        println!("Periodic tasks test failed: {}", e);
     }
 
     Ok(())
@@ -270,7 +297,7 @@ async fn test_async() -> Result<()> {
     println!("\nTesting async features:");
 
     // Create channels for notifications
-    let (event_tx, event_rx) = mpsc::channel(100);
+    let (_event_tx, event_rx) = mpsc::channel(100);
 
     // Create async executor
     let executor = AsyncTaskExecutor::new(10, 100);
@@ -318,5 +345,177 @@ async fn test_async() -> Result<()> {
     time::sleep(Duration::from_secs(5)).await;
 
     println!("Async test completed");
+    Ok(())
+}
+
+fn test_task_dependencies() -> Result<()> {
+    println!("\nTesting task dependencies:");
+
+    // Create a project with interdependent tasks
+    let mut project = Project::new(99, String::from("Dependencies Test"));
+
+    // Task chain: task1 <- task2 <- task3 <- task4
+    let task1 = Task::new(
+        1,
+        String::from("Requirement gathering"),
+        TaskStatus::ToDo,
+        TaskPriority::High,
+    );
+    let task2 = Task::new(
+        2,
+        String::from("Design"),
+        TaskStatus::ToDo,
+        TaskPriority::High,
+    );
+    let task3 = Task::new(
+        3,
+        String::from("Implementation"),
+        TaskStatus::ToDo,
+        TaskPriority::Medium,
+    );
+    let task4 = Task::new(
+        4,
+        String::from("Testing"),
+        TaskStatus::ToDo,
+        TaskPriority::Medium,
+    );
+
+    project.add_task(task1);
+    project.add_task(task2);
+    project.add_task(task3);
+    project.add_task(task4);
+
+    // Add dependencies
+    project.add_task_dependency(2, 1)?; // task2 depends on task1
+    project.add_task_dependency(3, 2)?; // task3 depends on task2
+    project.add_task_dependency(4, 3)?; // task4 depends on task3
+
+    // Get the execution order
+    println!("Task execution order:");
+    let order = project.get_task_execution_order()?;
+    for (idx, task) in order.iter().enumerate() {
+        println!("  {}: {} (ID: {})", idx + 1, task.title, task.id);
+    }
+
+    // Try adding a circular dependency (should fail)
+    println!("\nTrying to create a circular dependency:");
+    match project.add_task_dependency(1, 4) {
+        Ok(_) => println!("Unexpected success: circular dependency was added"),
+        Err(e) => println!("Expected error: {}", e),
+    }
+
+    // Check if tasks can be started
+    println!("\nChecking which tasks can be started:");
+    for task in &project.tasks {
+        println!(
+            "  Task {}: {} - Can start: {}",
+            task.id,
+            task.title,
+            task.can_start(&project.tasks)
+        );
+    }
+
+    // Mark task1 as done and check again
+    println!("\nMarking task 1 as done and checking again:");
+    if let Some(task) = project.tasks.iter_mut().find(|t| t.id == 1) {
+        task.status = TaskStatus::Done;
+    }
+
+    for task in &project.tasks {
+        println!(
+            "  Task {}: {} - Can start: {}",
+            task.id,
+            task.title,
+            task.can_start(&project.tasks)
+        );
+    }
+
+    println!("Task dependencies test completed");
+    Ok(())
+}
+
+fn test_periodic_tasks() -> Result<()> {
+    use crate::periodic_tasks::{PeriodicTask, PeriodicTaskScheduler, RecurrencePattern};
+    println!("\nTesting periodic tasks:");
+
+    // Create a task template
+    let template_task = Task::new(
+        100,
+        String::from("Weekly Report"),
+        TaskStatus::ToDo,
+        TaskPriority::Medium,
+    );
+
+    // Create a periodic task with a weekly pattern
+    let periodic_task = PeriodicTask::new(1, template_task.clone(), RecurrencePattern::Weekly);
+
+    println!(
+        "Created periodic task: {} (ID: {})",
+        periodic_task.template.title, periodic_task.id
+    );
+
+    // Create a scheduler
+    let mut scheduler = PeriodicTaskScheduler::new();
+
+    // Add the periodic task
+    scheduler.add_task(periodic_task);
+
+    // Create a daily standup task
+    let standup_template = Task::new(
+        200,
+        String::from("Daily Standup"),
+        TaskStatus::ToDo,
+        TaskPriority::High,
+    );
+
+    let standup_task = PeriodicTask::new(2, standup_template, RecurrencePattern::Daily);
+
+    scheduler.add_task(standup_task);
+
+    // Create a custom interval task
+    let backup_template = Task::new(
+        300,
+        String::from("System Backup"),
+        TaskStatus::ToDo,
+        TaskPriority::Low,
+    );
+
+    let backup_task = PeriodicTask::new(
+        3,
+        backup_template,
+        RecurrencePattern::Custom(Duration::from_secs(12 * 60 * 60)), // Every 12 hours
+    );
+
+    scheduler.add_task(backup_task);
+
+    // Normally we'd wait for tasks to become due, but for testing,
+    // we'll force all tasks to be "due" by modifying next_run to be in the past
+    for id in 1..=3 {
+        // Assuming task IDs 1, 2, 3
+        if let Some(task) = scheduler.get_task_mut(id) {
+            task.next_run = std::time::SystemTime::now() - Duration::from_secs(1);
+        }
+    }
+
+    // Generate due tasks
+    println!("Generating due tasks:");
+    let generated = scheduler.generate_due_tasks();
+
+    // Display generated tasks
+    for task in &generated {
+        println!("  Generated: {} (ID: {})", task.title, task.id);
+    }
+
+    // Check that the next_run has been updated
+    println!("\nNext scheduled runs:");
+    for task in scheduler.get_all_tasks() {
+        println!(
+            "  Task {}: next run in future: {}",
+            task.id,
+            task.next_run > std::time::SystemTime::now()
+        );
+    }
+
+    println!("Periodic tasks test completed");
     Ok(())
 }

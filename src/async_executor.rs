@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 
 use crate::error::{Result, TaskMasterError};
-use crate::task::{Task, TaskStatus};
+use crate::task::{Task};
 
 #[derive(Debug, Clone)]
 pub enum TaskEvent {

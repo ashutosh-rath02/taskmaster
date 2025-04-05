@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::error::{Result, TaskMasterError};
-use crate::task::{Task, TaskStatus};
+use crate::task::{Task};
 use crate::worker_pool::{JobResult, TaskJob, WorkerPool};
 
 pub struct TaskExecutor {
