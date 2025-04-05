@@ -16,6 +16,12 @@ A comprehensive task management system built in Rust, showcasing advanced Rust c
   - Terminal User Interface (TUI)
 - **Performance Optimization**: Caching system for improved response time
 
+## Screenshots
+
+![Projects Window](image.png)
+![Tasks Window](image-1.png)
+![Help Window](image-2.png)
+
 ## Installation
 
 Make sure you have Rust and Cargo installed. If not, install them from [rustup.rs](https://rustup.rs/).
